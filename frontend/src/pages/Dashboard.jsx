@@ -13,7 +13,27 @@ const Dashboard = () => {
     try {
       setError('');
       const response = await client.get('/api/analytics');
-      setStats(response.data);
+      // Transform alerts_by_hour array into chart-friendly format
+      const alertsData = response.data.alerts_by_hour.map((count, idx) => ({
+        date: `${idx}h`,
+        count: count
+      }));
+      
+      // Transform top_risk_customers into risk_distribution for bar chart
+      const riskData = [
+        { name: 'Critical', value: response.data.critical_alerts || 0 },
+        { name: 'High', value: response.data.high_alerts || 0 },
+        { name: 'Medium', value: response.data.total_alerts - (response.data.critical_alerts || 0) - (response.data.high_alerts || 0) || 0 },
+        { name: 'Low', value: 0 }
+      ];
+      
+      setStats({
+        ...response.data,
+        alerts_trend: alertsData,
+        risk_distribution: riskData,
+        system_status: 'healthy',
+        average_risk_score: response.data.avg_correlated_score
+      });
     } catch (err) {
       console.error(err);
       setError('Failed to fetch system analytics dashboard.');
