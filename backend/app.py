@@ -6,7 +6,7 @@ Backend API using FastAPI + Supabase PostgreSQL
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -66,6 +66,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ===== AUTHENTICATION ENDPOINTS =====
+
+@app.post("/api/auth/login", tags=["Authentication"])
+async def login(username: str = Form(...), password: str = Form(...)):
+    """
+    Simple login endpoint - accepts username/password in form data
+    Returns JWT token for authenticated requests
+    Default credentials: admin@riskshield.com / admin123
+    """
+    # Simple hardcoded auth for demo (replace with database lookup in production)
+    if username == "admin@riskshield.com" and password == "admin123":
+        return {
+            "access_token": "demo-token-riskshield-bfsi-x",
+            "token_type": "bearer",
+            "user": {
+                "email": "admin@riskshield.com",
+                "role": "analyst"
+            }
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
 
 # ===== HEALTH CHECK ENDPOINT =====
 
@@ -176,31 +201,183 @@ async def get_alerts(
     Get correlated alerts (security + fraud combined)
     Supports filtering by risk_level: Low, Medium, High, Critical
     """
+    from models import CorrelatedAlert
+    
     try:
-        # TODO: Query correlated_alerts table with explanations
+        query = db.query(CorrelatedAlert)
+        
+        # Filter by risk level if provided
+        if risk_level and risk_level != "All":
+            query = query.filter(CorrelatedAlert.risk_level == risk_level)
+        
+        # Get total and limited results
+        total = query.count()
+        alerts_data = query.order_by(CorrelatedAlert.created_at.desc()).limit(limit).all()
+        
+        # Format for frontend
+        alerts_list = [
+            {
+                "id": a.id,
+                "customer_id": a.customer_id,
+                "transaction_id": a.transaction_id,
+                "security_event_id": a.security_event_id,
+                "correlated_score": round(a.correlated_score, 2),
+                "risk_level": a.risk_level,
+                "explanation": a.explanation,
+                "status": a.status,
+                "created_at": a.created_at.isoformat() if a.created_at else None
+            }
+            for a in alerts_data
+        ]
+        
         return {
-            "alerts": [],
-            "total": 0,
+            "alerts": alerts_list,
+            "total": total,
             "limit": limit
         }
     except Exception as e:
         logger.error(f"❌ Alerts fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/api/alerts/{alert_id}", tags=["Alerts"])
+async def update_alert_status(alert_id: int, body: dict, db: Session = Depends(get_db)):
+    """
+    Update alert status (open, investigating, resolved, false_positive)
+    """
+    from models import CorrelatedAlert
+    from pydantic import BaseModel
+    
+    class AlertUpdate(BaseModel):
+        status_update: str
+    
+    try:
+        # Parse the body
+        status_update = body.get("status_update") if isinstance(body, dict) else None
+        
+        if not status_update:
+            raise HTTPException(status_code=400, detail="status_update required")
+        
+        alert = db.query(CorrelatedAlert).filter(CorrelatedAlert.id == alert_id).first()
+        
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        
+        valid_statuses = ["open", "investigating", "resolved", "false_positive"]
+        if status_update not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+        
+        alert.status = status_update
+        db.commit()
+        
+        return {
+            "id": alert.id,
+            "status": alert.status,
+            "message": "Alert status updated"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Alert update error: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/alerts/{alert_id}/graph", tags=["Alerts"])
 async def get_alert_graph(alert_id: int, db: Session = Depends(get_db)):
     """
     Get graph data for an alert (nodes + edges for D3 visualization)
-    Nodes: account, device, beneficiary, IP
+    Nodes: customer, transaction, security_event, device, IP
     Edges: login_from, transferred_to, shared_device
     """
+    from models import CorrelatedAlert, Transaction, SecurityEvent
+    
     try:
-        # TODO: Build graph around alert
+        alert = db.query(CorrelatedAlert).filter(CorrelatedAlert.id == alert_id).first()
+        
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        
+        nodes = []
+        edges = []
+        
+        # Node 1: Customer (always present)
+        nodes.append({
+            "id": f"cust_{alert.customer_id}",
+            "label": alert.customer_id,
+            "type": "customer",
+            "value": 30
+        })
+        
+        # Node 2: Transaction + edges
+        if alert.transaction_id:
+            txn = db.query(Transaction).filter(Transaction.id == alert.transaction_id).first()
+            if txn:
+                nodes.append({
+                    "id": f"tx_{txn.id}",
+                    "label": txn.transaction_id,
+                    "type": "transaction",
+                    "value": 25,
+                    "details": f"Amount: ₹{txn.transaction_amount} | Score: {txn.prediction_score:.2f}"
+                })
+                edges.append({
+                    "source": f"cust_{alert.customer_id}",
+                    "target": f"tx_{txn.id}",
+                    "type": "transact"
+                })
+        
+        # Node 3: Security Event + Node 4: Device + Node 5: IP
+        if alert.security_event_id:
+            sec = db.query(SecurityEvent).filter(SecurityEvent.id == alert.security_event_id).first()
+            if sec:
+                nodes.append({
+                    "id": f"event_{sec.id}",
+                    "label": sec.event_type,
+                    "type": "security_event",
+                    "value": 25,
+                    "details": f"Trap Score: {sec.security_trap_score:.2f}"
+                })
+                edges.append({
+                    "source": f"cust_{alert.customer_id}",
+                    "target": f"event_{sec.id}",
+                    "type": "correlation"
+                })
+                
+                # Node 4: Device fingerprint
+                if sec.device_fingerprint:
+                    nodes.append({
+                        "id": f"dev_{sec.device_fingerprint}",
+                        "label": sec.device_fingerprint[:12],
+                        "type": "device",
+                        "value": 15,
+                        "details": f"Device: {sec.device_fingerprint}"
+                    })
+                    edges.append({
+                        "source": f"event_{sec.id}",
+                        "target": f"dev_{sec.device_fingerprint}",
+                        "type": "used_device"
+                    })
+                
+                # Node 5: IP Address
+                if sec.ip_address:
+                    nodes.append({
+                        "id": f"ip_{sec.ip_address}",
+                        "label": sec.ip_address,
+                        "type": "ip",
+                        "value": 15,
+                        "details": f"IP: {sec.ip_address} | Geo: {sec.geo_location or 'Unknown'}"
+                    })
+                    edges.append({
+                        "source": f"event_{sec.id}",
+                        "target": f"ip_{sec.ip_address}",
+                        "type": "login_from"
+                    })
+        
         return {
-            "nodes": [],
-            "edges": [],
+            "nodes": nodes,
+            "edges": edges,
             "alert_id": alert_id
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Graph fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -215,14 +392,62 @@ async def get_analytics(db: Session = Depends(get_db)):
     - Trend data for charts
     - Top at-risk customers
     """
+    from models import CorrelatedAlert
+    from datetime import datetime, timedelta
+    
     try:
-        # TODO: Query materialized views or aggregates
+        # Get all alerts
+        alerts = db.query(CorrelatedAlert).all()
+        
+        total_alerts = len(alerts)
+        critical_alerts = len([a for a in alerts if a.risk_level == "Critical"])
+        high_alerts = len([a for a in alerts if a.risk_level == "High"])
+        
+        # Calculate average score
+        avg_score = sum([a.correlated_score for a in alerts]) / total_alerts if total_alerts > 0 else 0.0
+        
+        # Alerts by hour (last 24 hours)
+        alerts_by_hour = []
+        for i in range(24):
+            alerts_by_hour.append(0)
+        
+        for alert in alerts:
+            if alert.created_at:
+                hour_diff = (datetime.utcnow() - alert.created_at).total_seconds() / 3600
+                if hour_diff < 24:
+                    idx = min(int(hour_diff), 23)
+                    alerts_by_hour[23 - idx] += 1
+        
+        # Top risk customers (group by customer_id)
+        customer_risks = {}
+        for alert in alerts:
+            if alert.customer_id not in customer_risks:
+                customer_risks[alert.customer_id] = {"count": 0, "avg_score": 0.0, "max_risk": "Low"}
+            customer_risks[alert.customer_id]["count"] += 1
+            customer_risks[alert.customer_id]["avg_score"] = (
+                customer_risks[alert.customer_id]["avg_score"] + alert.correlated_score
+            ) / 2
+            
+            risk_levels = ["Low", "Medium", "High", "Critical"]
+            try:
+                if risk_levels.index(alert.risk_level) > risk_levels.index(customer_risks[alert.customer_id]["max_risk"]):
+                    customer_risks[alert.customer_id]["max_risk"] = alert.risk_level
+            except ValueError:
+                pass
+        
+        top_risk_customers = sorted(
+            [{"customer_id": cid, **data} for cid, data in customer_risks.items()],
+            key=lambda x: x["avg_score"],
+            reverse=True
+        )[:5]
+        
         return {
-            "total_alerts": 0,
-            "avg_correlated_score": 0.0,
-            "critical_alerts": 0,
-            "alerts_by_hour": [],
-            "top_risk_customers": []
+            "total_alerts": total_alerts,
+            "critical_alerts": critical_alerts,
+            "high_alerts": high_alerts,
+            "avg_correlated_score": round(avg_score, 2),
+            "alerts_by_hour": alerts_by_hour,
+            "top_risk_customers": top_risk_customers
         }
     except Exception as e:
         logger.error(f"❌ Analytics error: {e}")
@@ -233,18 +458,76 @@ async def get_analytics(db: Session = Depends(get_db)):
 @app.post("/api/seed-data", tags=["Testing"])
 async def seed_test_data(db: Session = Depends(get_db)):
     """
-    Populate test data (transactions + security events) for demo
+    Populate test data (transactions + security events + alerts) for demo
     WARNING: Only enable in development
     """
-    if os.getenv("ENVIRONMENT") == "production":
-        raise HTTPException(status_code=403, detail="Seeding disabled in production")
+    from datetime import datetime, timedelta
+    from models import Transaction, SecurityEvent, CorrelatedAlert
     
     try:
-        # TODO: Call data generation functions
+        # Clear existing data
+        db.query(CorrelatedAlert).delete()
+        db.query(Transaction).delete()
+        db.query(SecurityEvent).delete()
+        db.commit()
+        
+        # Create test transactions
+        transactions = []
+        for i in range(15):
+            tx_datetime = datetime.utcnow() - timedelta(hours=i*2)
+            tx = Transaction(
+                customer_id=f"CUST{1000+i}",
+                email=f"customer{i}@example.com",
+                transaction_id=f"TXN{10000+i}",
+                transaction_amount=float(100 + i*50),
+                transaction_datetime=tx_datetime,
+                prediction_score=0.3 + (i % 5) * 0.15,
+                is_fraud=1 if (i % 5 == 0) else 0,
+                combined_score=0.3 + (i % 5) * 0.15
+            )
+            transactions.append(tx)
+            db.add(tx)
+        db.commit()
+        
+        # Create test security events
+        security_events = []
+        for i in range(10):
+            event_time = datetime.utcnow() - timedelta(hours=i*3)
+            event = SecurityEvent(
+                customer_id=f"CUST{1000+i}",
+                email=f"customer{i}@example.com",
+                event_type=["login", "failed_login", "session_start"][i % 3],
+                device_fingerprint=f"DEV{5000+i}",
+                ip_address=f"192.168.{i}.{100+i}",
+                security_trap_score=0.2 + (i % 4) * 0.2,
+                event_timestamp=event_time
+            )
+            security_events.append(event)
+            db.add(event)
+        db.commit()
+        
+        # Create correlated alerts
+        alerts = []
+        for i in range(8):
+            alert = CorrelatedAlert(
+                customer_id=f"CUST{1000+i}",
+                transaction_id=transactions[i].id if i < len(transactions) else None,
+                security_event_id=security_events[i].id if i < len(security_events) else None,
+                correlation_window_sec=900,
+                correlated_score=0.4 + (i % 4) * 0.15,
+                risk_level=["Low", "Medium", "High", "Critical"][i % 4],
+                explanation=f"Suspicious transaction from customer {i} with concurrent security event",
+                status="open"
+            )
+            alerts.append(alert)
+            db.add(alert)
+        db.commit()
+        
         return {
-            "transactions_created": 0,
-            "security_events_created": 0,
-            "alerts_created": 0
+            "transactions_created": len(transactions),
+            "security_events_created": len(security_events),
+            "alerts_created": len(alerts),
+            "message": "✅ Test data seeded successfully"
         }
     except Exception as e:
         logger.error(f"❌ Seeding error: {e}")

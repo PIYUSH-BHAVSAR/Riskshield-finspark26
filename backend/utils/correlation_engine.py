@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from backend.models import Transaction, SecurityEvent, CorrelatedAlert
-from backend.utils.explain import generate_correlated_explanation
+from models import Transaction, SecurityEvent, CorrelatedAlert
+from utils.explain import generate_correlated_explanation
 
 CORRELATION_WINDOW = timedelta(minutes=15)
 CORRELATION_BONUS = 0.25

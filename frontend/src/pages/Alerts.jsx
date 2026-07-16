@@ -24,11 +24,13 @@ const Alerts = () => {
       if (riskFilter) params.risk_level = riskFilter;
       
       const response = await client.get(url, { params });
-      setAlerts(response.data);
+      // API returns { alerts: [...], total: N, limit: N }
+      const alertsData = response.data.alerts || [];
+      setAlerts(alertsData);
       
       // Auto-select the first alert if none is selected
-      if (response.data.length > 0 && !selectedAlert) {
-        handleSelectAlert(response.data[0]);
+      if (alertsData.length > 0 && !selectedAlert) {
+        handleSelectAlert(alertsData[0]);
       }
     } catch (err) {
       console.error(err);
