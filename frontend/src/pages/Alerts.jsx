@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import client from '../api/client';
+import mockClient from '../api/mockClient';
 import RiskBadge from '../components/RiskBadge';
 import NetworkGraph from '../components/NetworkGraph';
 
@@ -23,7 +23,7 @@ const Alerts = () => {
       if (statusFilter) params.status = statusFilter;
       if (riskFilter) params.risk_level = riskFilter;
       
-      const response = await client.get(url, { params });
+      const response = await mockClient.get(url, { params });
       // API returns { alerts: [...], total: N, limit: N }
       const alertsData = response.data.alerts || [];
       setAlerts(alertsData);
@@ -48,7 +48,7 @@ const Alerts = () => {
     setSelectedAlert(alert);
     setLoadingGraph(true);
     try {
-      const response = await client.get(`/api/alerts/${alert.id}/graph`);
+      const response = await mockClient.get(`/api/alerts/${alert.id}/graph`);
       setGraphData(response.data);
     } catch (err) {
       console.error(err);
@@ -59,7 +59,7 @@ const Alerts = () => {
 
   const handleStatusChange = async (alertId, newStatus) => {
     try {
-      const response = await client.patch(`/api/alerts/${alertId}`, {
+      const response = await mockClient.patch(`/api/alerts/${alertId}`, {
         status_update: newStatus
       });
       

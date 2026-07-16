@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
-import client from '../api/client';
+import mockClient from '../api/mockClient';
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
@@ -12,28 +12,9 @@ const Dashboard = () => {
   const fetchStats = async () => {
     try {
       setError('');
-      const response = await client.get('/api/analytics');
-      // Transform alerts_by_hour array into chart-friendly format
-      const alertsData = response.data.alerts_by_hour.map((count, idx) => ({
-        date: `${idx}h`,
-        count: count
-      }));
-      
-      // Transform top_risk_customers into risk_distribution for bar chart
-      const riskData = [
-        { name: 'Critical', value: response.data.critical_alerts || 0 },
-        { name: 'High', value: response.data.high_alerts || 0 },
-        { name: 'Medium', value: response.data.total_alerts - (response.data.critical_alerts || 0) - (response.data.high_alerts || 0) || 0 },
-        { name: 'Low', value: 0 }
-      ];
-      
-      setStats({
-        ...response.data,
-        alerts_trend: alertsData,
-        risk_distribution: riskData,
-        system_status: 'healthy',
-        average_risk_score: response.data.avg_correlated_score
-      });
+      const response = await mockClient.get('/api/analytics');
+      // mockData already has alerts_trend, risk_distribution, average_risk_score shaped correctly
+      setStats(response.data);
     } catch (err) {
       console.error(err);
       setError('Failed to fetch system analytics dashboard.');
@@ -53,7 +34,7 @@ const Dashboard = () => {
     setTriggering(true);
     setTriggerSuccess('');
     try {
-      const response = await client.post('/api/run-correlation');
+      const response = await mockClient.post('/api/run-correlation');
       const count = response.data.new_alerts_created;
       setTriggerSuccess(`Correlation engine ran successfully. Detected ${count} new threat vectors.`);
       fetchStats();

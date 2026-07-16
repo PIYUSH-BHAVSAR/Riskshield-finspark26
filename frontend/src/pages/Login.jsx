@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import client from '../api/client';
+import mockClient from '../api/mockClient';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -20,7 +20,7 @@ const Login = () => {
       formData.append('username', email);
       formData.append('password', password);
 
-      const response = await client.post('/api/auth/login', formData, {
+      const response = await mockClient.post('/api/auth/login', formData, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
