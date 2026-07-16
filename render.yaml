@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: riskshield-bfsi-x
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app_gradio.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10
+      - key: PORT
+        value: 7860
+      - key: DATABASE_URL
+        value: postgresql://postgres:Piyush%401665@db.ukoxjxfevchmfhctuqsa.supabase.co:5432/postgres?sslmode=require
+      - key: SUPABASE_URL
+        value: https://ukoxjxfevchmfhctuqsa.supabase.co
+      - key: SUPABASE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVrb3hqeGZldmNobWZoY3R1cXNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxMzUzNjMsImV4cCI6MjA5OTcxMTM2M30.L9uFT7bDfLQ9WPEVzgAGqQMgzSLFRddAj2CFOiW1K60
